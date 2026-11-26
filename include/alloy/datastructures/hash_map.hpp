@@ -315,8 +315,10 @@ namespace details::hash_map {
 
     template<class K, class V, class H, class E>
     concept map_types = std::move_constructible<K> && std::move_constructible<V> &&
-                        (std::is_copy_constructible_v<K> || nothrow_transfer<K, V>) && std::copy_constructible<H> &&
-                        std::copy_constructible<E> && alloy::hashing::hashable_with<H, K> && compares_keys<E, K, K>;
+                        (std::is_copy_constructible_v<K> || nothrow_transfer<K, V> ||
+                         alloy::is_trivially_relocatable<std::pair<K, V>>) &&
+                        std::copy_constructible<H> && std::copy_constructible<E> &&
+                        alloy::hashing::hashable_with<H, K> && compares_keys<E, K, K>;
 
     template<class T>
     inline constexpr bool is_pair = false;
@@ -364,6 +366,11 @@ public:
     using hasher = Hash;
     using key_equal = KeyEqual;
     using allocator_type = alloy::alloc::allocator;
+    using is_trivially_relocatable =
+        std::conditional_t<alloy::is_trivially_relocatable<allocator_type> && alloy::is_trivially_relocatable<Hash> &&
+                               alloy::is_trivially_relocatable<KeyEqual>,
+                           void,
+                           bool>;
 
     using reference = std::pair<const Key&, Val&>;
     using const_reference = std::pair<const Key&, const Val&>;
@@ -1005,10 +1012,20 @@ public:
                 ++it;
                 continue;
             }
-            with_transfer_args(value, [&](auto&&... args) {
-                finish_insert(loc, std::forward<decltype(args)>(args)...);
-            });
-            it = src.erase(it);
+            if constexpr (alloy::is_trivially_relocatable<storage_type>) {
+                auto next = it;
+                ++next;
+                auto* slot = data_ + loc.insert_group * group_size + loc.insert_slot;
+                alloy::relocate_n(slot, alloy::addressof(value), 1);
+                commit_insert(loc);
+                src.recover_relocated(it);
+                it = next;
+            } else {
+                with_transfer_args(value, [&](auto&&... args) {
+                    finish_insert(loc, std::forward<decltype(args)>(args)...);
+                });
+                it = src.erase(it);
+            }
         }
     }
 
@@ -1280,12 +1297,19 @@ private:
     }
 
     void move_layout_from(hash_map& other) {
-        transfer_layout_from<details::hash_map::nothrow_transfer<Key, Val>>(
-            other, [](storage_type* dst, storage_type& src) {
-                with_transfer_args(src, [dst](auto&&... args) {
-                    alloy::construct_at(dst, std::forward<decltype(args)>(args)...);
-                });
+        if constexpr (alloy::is_trivially_relocatable<storage_type>) {
+            transfer_layout_from<true>(other, [](storage_type* dst, storage_type& src) noexcept {
+                alloy::relocate_n(dst, alloy::addressof(src), 1);
             });
+            other.len_ = 0;
+        } else {
+            transfer_layout_from<details::hash_map::nothrow_transfer<Key, Val>>(
+                other, [](storage_type* dst, storage_type& src) {
+                    with_transfer_args(src, [dst](auto&&... args) {
+                        alloy::construct_at(dst, std::forward<decltype(args)>(args)...);
+                    });
+                });
+        }
     }
 
     void destroy() noexcept {
@@ -1332,6 +1356,11 @@ private:
         --len_;
     }
 
+    void recover_relocated(const_iterator it) noexcept {
+        assert(it.map_ == this && it != cend());
+        recover_slot(it.group_, it.slot_);
+    }
+
     void erase_impl(const locator& loc) noexcept {
         assert(loc.ptr != nullptr);
 
@@ -1361,7 +1390,10 @@ private:
         auto* slot = data_ + loc.insert_group * group_size + loc.insert_slot;
 
         alloy::construct_at(slot, std::forward<Args>(args)...);
+        return commit_insert(loc);
+    }
 
+    auto commit_insert(const insert_location& loc) noexcept -> std::pair<iterator, bool> {
         if (loc.needs_overflow) {
             for (auto p = loc.first_unmarked; p.get() != loc.insert_group;) {
                 groups_[p.get()].mark_overflow(loc.hash);
@@ -1517,15 +1549,15 @@ private:
         }
     }
 
-    template<class... Args>
-    auto insert_unique(size_type h, Args&&... args) -> locator {
+    template<class Construct>
+    auto insert_unique_with(size_type h, Construct&& construct) -> locator {
         for (prober p(position_for(h));;) {
             const auto pos = p.get();
             auto& g = groups_[pos];
             if (const auto available = g.match_available(); available) {
                 const auto idx = static_cast<uint32_t>(std::countr_zero(static_cast<uint32_t>(available)));
                 auto* slot = data_ + pos * group_size + idx;
-                alloy::construct_at(slot, std::forward<Args>(args)...);
+                construct(slot);
                 g.set(idx, h);
                 ++len_;
                 return {pos, idx, slot};
@@ -1534,6 +1566,13 @@ private:
             if (!p.next(group_mask_))
                 std::abort();
         }
+    }
+
+    template<class... Args>
+    auto insert_unique(size_type h, Args&&... args) -> locator {
+        return insert_unique_with(h, [&](storage_type* slot) {
+            alloy::construct_at(slot, std::forward<Args>(args)...);
+        });
     }
 
     template<class F>
@@ -1573,16 +1612,23 @@ private:
             return;
         }
 
-        constexpr bool safe_transfer = details::hash_map::nothrow_transfer<Key, Val>;
+        constexpr bool raw_relocation = alloy::is_trivially_relocatable<storage_type>;
+        constexpr bool safe_transfer = raw_relocation || details::hash_map::nothrow_transfer<Key, Val>;
 
         constexpr bool safe_hash = noexcept(hash_key(std::declval<const Key&>()));
 
         constexpr bool may_move = safe_transfer || !std::is_copy_constructible_v<Val>;
 
         auto relocate_one = [&](storage_type& value, size_type h) {
-            with_transfer_args(value, [&](auto&&... args) {
-                target.insert_unique(h, std::forward<decltype(args)>(args)...);
-            });
+            if constexpr (raw_relocation) {
+                target.insert_unique_with(h, [&](storage_type* slot) noexcept {
+                    alloy::relocate_n(slot, alloy::addressof(value), 1);
+                });
+            } else {
+                with_transfer_args(value, [&](auto&&... args) {
+                    target.insert_unique(h, std::forward<decltype(args)>(args)...);
+                });
+            }
         };
 
         if constexpr (may_move && !safe_hash) {
@@ -1612,6 +1658,9 @@ private:
             for_each_occupied([&](storage_type& value) {
                 relocate_one(value, hash_key(value.first));
             });
+        }
+        if constexpr (raw_relocation) {
+            len_ = 0;
         }
     }
 };
