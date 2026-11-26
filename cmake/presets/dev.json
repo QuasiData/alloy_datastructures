@@ -16,6 +16,7 @@
                 "base"
             ],
             "cacheVariables": {
+                "FETCHCONTENT_SOURCE_DIR_ALLOY_CORE": "${sourceDir}/../alloy_core",
                 "FETCHCONTENT_SOURCE_DIR_ALLOY_ALLOC": "${sourceDir}/../alloy_alloc"
             }
         },
@@ -25,6 +26,7 @@
                 "linux-clang"
             ],
             "cacheVariables": {
+                "FETCHCONTENT_SOURCE_DIR_ALLOY_CORE": "${sourceDir}/../alloy_core",
                 "FETCHCONTENT_SOURCE_DIR_ALLOY_ALLOC": "${sourceDir}/../alloy_alloc"
             }
         },
@@ -34,6 +36,7 @@
                 "linux-clang-san"
             ],
             "cacheVariables": {
+                "FETCHCONTENT_SOURCE_DIR_ALLOY_CORE": "${sourceDir}/../alloy_core",
                 "FETCHCONTENT_SOURCE_DIR_ALLOY_ALLOC": "${sourceDir}/../alloy_alloc"
             }
         },
@@ -43,6 +46,7 @@
                 "linux-gcc"
             ],
             "cacheVariables": {
+                "FETCHCONTENT_SOURCE_DIR_ALLOY_CORE": "${sourceDir}/../alloy_core",
                 "FETCHCONTENT_SOURCE_DIR_ALLOY_ALLOC": "${sourceDir}/../alloy_alloc"
             }
         },
@@ -52,6 +56,7 @@
                 "linux-gcc-san"
             ],
             "cacheVariables": {
+                "FETCHCONTENT_SOURCE_DIR_ALLOY_CORE": "${sourceDir}/../alloy_core",
                 "FETCHCONTENT_SOURCE_DIR_ALLOY_ALLOC": "${sourceDir}/../alloy_alloc"
             }
         },
@@ -61,6 +66,7 @@
                 "windows-clang"
             ],
             "cacheVariables": {
+                "FETCHCONTENT_SOURCE_DIR_ALLOY_CORE": "${sourceDir}/../alloy_core",
                 "FETCHCONTENT_SOURCE_DIR_ALLOY_ALLOC": "${sourceDir}/../alloy_alloc"
             }
         },
@@ -70,6 +76,7 @@
                 "windows-msvc"
             ],
             "cacheVariables": {
+                "FETCHCONTENT_SOURCE_DIR_ALLOY_CORE": "${sourceDir}/../alloy_core",
                 "FETCHCONTENT_SOURCE_DIR_ALLOY_ALLOC": "${sourceDir}/../alloy_alloc"
             }
         }

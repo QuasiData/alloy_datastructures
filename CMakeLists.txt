@@ -9,7 +9,7 @@ option(ALLOY_DATASTRUCTURES_BUILD_DOCS "Build API documentation target" OFF)
 add_library(alloy_datastructures_compile_options INTERFACE)
 
 target_compile_features(
-    alloy_datastructures_compile_options INTERFACE cxx_std_20
+    alloy_datastructures_compile_options INTERFACE cxx_std_23
 )
 
 if(CMAKE_CXX_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC")
@@ -27,17 +27,18 @@ endif()
 include(cmake/AlloyDependencies.cmake)
 include(cmake/AlloyDependencyPins.cmake)
 
+alloy_declare_dependency(alloy_core)
 alloy_declare_dependency(alloy_alloc)
-FetchContent_MakeAvailable(alloy_alloc)
+FetchContent_MakeAvailable(alloy_core alloy_alloc)
 
-add_library(alloy_datastructures STATIC src/vector.cpp)
+add_library(alloy_datastructures STATIC src/vector.cpp include/alloy/datastructures/hash_map.hpp)
 add_library(alloy::datastructures ALIAS alloy_datastructures)
-target_compile_features(alloy_datastructures PUBLIC cxx_std_20)
+target_compile_features(alloy_datastructures PUBLIC cxx_std_23)
 set_target_properties(alloy_datastructures PROPERTIES CXX_EXTENSIONS OFF CXX_SCAN_FOR_MODULES OFF)
 target_include_directories(alloy_datastructures PUBLIC
     "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
 )
-target_link_libraries(alloy_datastructures PUBLIC alloy::alloc PRIVATE alloy_datastructures_compile_options)
+target_link_libraries(alloy_datastructures PUBLIC alloy::core alloy::alloc PRIVATE alloy_datastructures_compile_options)
 
 if(ALLOY_DATASTRUCTURES_BUILD_TESTS)
     enable_testing()

@@ -1,6 +1,6 @@
 #include <alloy/datastructures/vector.hpp>
 
-namespace alloy::datastructures {
+namespace alloy::ds {
 
 
-} // namespace alloy::datastructures
+} // namespace alloy::ds

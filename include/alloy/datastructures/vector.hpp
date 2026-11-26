@@ -1,6 +1,6 @@
 #pragma once
 
-namespace alloy::datastructures {
+namespace alloy::ds {
 
 
-} // namespace alloy::datastructures
+} // namespace alloy::ds
