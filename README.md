@@ -21,9 +21,9 @@ Clone all three repositories into the same directory:
 ```sh
 mkdir alloy
 cd alloy
+git clone https://github.com/QuasiData/alloy_core.git
 git clone https://github.com/QuasiData/alloy_alloc.git
 git clone https://github.com/QuasiData/alloy_datastructures.git
-git clone https://github.com/QuasiData/alloy_ecs.git
 cd alloy_datastructures
 cmake --preset dev
 cmake --build --preset dev-debug

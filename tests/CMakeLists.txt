@@ -15,6 +15,7 @@ function(add_datastructures_tests target prefix)
     add_executable(${target}
         test.cpp
         hash_map_tests.cpp
+        vector_tests.cpp
     )
 
     target_link_libraries(${target} PRIVATE

@@ -348,7 +348,7 @@ struct vector {
     void resize(size_type count)
         requires std::default_initializable<value_type>
     {
-        resize_impl(count, [](pointer dst) {
+        resize_impl(count, [](pointer dst) -> auto {
             alloy::construct_at(dst);
         });
     }
@@ -356,7 +356,7 @@ struct vector {
     void resize(size_type count, const_reference value)
         requires std::is_copy_constructible_v<value_type>
     {
-        resize_impl(count, [&](pointer dst) {
+        resize_impl(count, [&](pointer dst) -> auto {
             alloy::construct_at(dst, value);
         });
     }
@@ -651,7 +651,7 @@ private:
 
     template<class I, class S>
     [[nodiscard]] static auto range_count(const I& first, const S& last) -> size_type {
-        const auto count = [&] {
+        const auto count = [&] -> auto {
             if constexpr (std::sized_sentinel_for<S, I>) {
                 return last - first;
             } else {
@@ -870,7 +870,7 @@ private:
     template<class... Args>
     auto grow_emplace(size_type idx, Args&&... args) -> iterator {
         const auto capacity = recommended_growth_capacity(checked_size(1));
-        return grow_insert(idx, 1, capacity, [&](construction_guard& guard) {
+        return grow_insert(idx, 1, capacity, [&](construction_guard& guard) -> auto {
             alloy::construct_at(guard.data, std::forward<Args>(args)...);
             ++guard.len;
         });
@@ -885,7 +885,7 @@ private:
         }
 
         const auto extra = count - len_;
-        auto construct_tail = [&](construction_guard& guard) {
+        auto construct_tail = [&](construction_guard& guard) -> auto {
             for (size_type i = 0; i < extra; ++i) {
                 construct(guard.data + guard.len);
                 ++guard.len;
@@ -910,7 +910,7 @@ private:
         }
 
         if (required > cap_) {
-            grow_insert(len_, count, recommended_growth_capacity(required), [&](construction_guard& guard) {
+            grow_insert(len_, count, recommended_growth_capacity(required), [&](construction_guard& guard) -> auto {
                 construct_from(guard, source, count);
             });
         } else {
@@ -928,7 +928,7 @@ private:
             return ptr_at(idx);
         }
         if (required > cap_) {
-            return grow_insert(idx, count, recommended_growth_capacity(required), [&](construction_guard& guard) {
+            return grow_insert(idx, count, recommended_growth_capacity(required), [&](construction_guard& guard) -> auto {
                 construct_from(guard, source, count);
             });
         }

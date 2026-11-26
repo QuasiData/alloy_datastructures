@@ -95,11 +95,11 @@ namespace details::hash_map {
         }
 
         [[nodiscard]] auto is_not_overflow(size_t hash) const noexcept -> bool {
-            return (overflow() & (1U << (hash & 7))) == 0;
+            return (overflow() & (1ULL << (hash & 7ULL))) == 0;
         }
 
         void mark_overflow(size_t hash) noexcept {
-            overflow() |= static_cast<uint8_t>(1U << (hash & 7));
+            overflow() |= static_cast<uint8_t>(1ULL << (hash & 7ULL));
         }
 
         [[nodiscard]] auto maybe_caused_overflow_pos(size_t pos) const noexcept -> bool {
@@ -312,6 +312,11 @@ namespace details::hash_map {
         std::predicate<const E&, const L&, const R&> && requires(const E& eq, const L& lhs, const R& rhs) {
             { eq(lhs, rhs) } -> std::convertible_to<bool>;
         };
+
+    template<class K, class Key, class H, class E>
+    concept transparent_lookup_key = alloy::hashing::transparent<H> && alloy::hashing::transparent<E> &&
+                                     alloy::hashing::hashable_with<H, std::remove_reference_t<K>> &&
+                                     compares_keys<E, Key, std::remove_reference_t<K>>;
 
     template<class K, class V, class H, class E>
     concept map_types = std::move_constructible<K> && std::move_constructible<V> &&
@@ -742,9 +747,9 @@ public:
     auto emplace(std::piecewise_construct_t, std::tuple<Ks...> keys, std::tuple<Vs...> values)
         -> std::pair<iterator, bool> {
         return std::apply(
-            [&](auto&&... key_args) {
+            [&](auto&&... key_args) -> auto {
                 return std::apply(
-                    [&](auto&&... value_args) {
+                    [&](auto&&... value_args) -> auto {
                         if constexpr (sizeof...(Ks) == 1) {
                             return emplace_key(std::forward<decltype(key_args)>(key_args)...,
                                                std::forward<decltype(value_args)>(value_args)...);
@@ -802,6 +807,21 @@ public:
         return try_emplace(std::move(key), std::forward<Args>(args)...).first;
     }
 
+    template<class K, class... Args>
+        requires details::hash_map::transparent_lookup_key<K, Key, Hash, KeyEqual> &&
+                 std::constructible_from<Key, K&&> && std::constructible_from<mapped_type, Args...> &&
+                 (!std::is_convertible_v<K&&, iterator>) && (!std::is_convertible_v<K&&, const_iterator>)
+    auto try_emplace(K&& key, Args&&... args) -> std::pair<iterator, bool> {
+        return try_emplace_impl(std::forward<K>(key), std::forward<Args>(args)...);
+    }
+
+    template<class K, class... Args>
+        requires details::hash_map::transparent_lookup_key<K, Key, Hash, KeyEqual> &&
+                 std::constructible_from<Key, K&&> && std::constructible_from<mapped_type, Args...>
+    auto try_emplace(const_iterator, K&& key, Args&&... args) -> iterator {
+        return try_emplace_impl(std::forward<K>(key), std::forward<Args>(args)...).first;
+    }
+
     template<class M>
         requires std::is_copy_constructible_v<Key> && std::is_assignable_v<mapped_type&, M&&> &&
                  std::constructible_from<mapped_type, M&&>
@@ -840,6 +860,28 @@ public:
         return insert_or_assign(std::move(key), std::forward<M>(value)).first;
     }
 
+    template<class K, class M>
+        requires details::hash_map::transparent_lookup_key<K, Key, Hash, KeyEqual> &&
+                 std::constructible_from<Key, K&&> && std::is_assignable_v<mapped_type&, M&&> &&
+                 std::constructible_from<mapped_type, M&&>
+    auto insert_or_assign(K&& key, M&& value) -> std::pair<iterator, bool> {
+        auto [it, inserted] = try_emplace_impl(std::forward<K>(key), std::forward<M>(value));
+
+        if (!inserted) {
+            it->second = std::forward<M>(value);
+        }
+
+        return {it, inserted};
+    }
+
+    template<class K, class M>
+        requires details::hash_map::transparent_lookup_key<K, Key, Hash, KeyEqual> &&
+                 std::constructible_from<Key, K&&> && std::is_assignable_v<mapped_type&, M&&> &&
+                 std::constructible_from<mapped_type, M&&>
+    auto insert_or_assign(const_iterator, K&& key, M&& value) -> iterator {
+        return insert_or_assign(std::forward<K>(key), std::forward<M>(value)).first;
+    }
+
     auto erase(iterator pos) -> iterator {
         return erase(const_iterator(pos));
     }
@@ -875,6 +917,20 @@ public:
         return iterator(this, last.group_, last.slot_);
     }
 
+    template<class K>
+        requires details::hash_map::transparent_lookup_key<K, Key, Hash, KeyEqual> &&
+                 (!std::is_convertible_v<K&&, iterator>) && (!std::is_convertible_v<K&&, const_iterator>)
+    auto erase(K&& key) -> size_type {
+        const auto loc = find_impl(key);
+
+        if (!loc) {
+            return 0;
+        }
+
+        erase_impl(loc);
+        return 1;
+    }
+
     [[nodiscard]] auto find(this auto& self, const key_type& key) {
         using self_t = std::remove_reference_t<decltype(self)>;
 
@@ -890,11 +946,9 @@ public:
     }
 
     template<class K>
-        requires alloy::hashing::transparent<Hash> && alloy::hashing::transparent<KeyEqual> &&
-                 alloy::hashing::hashable_with<Hash, K> && details::hash_map::compares_keys<KeyEqual, Key, K>
+        requires details::hash_map::transparent_lookup_key<K, Key, Hash, KeyEqual>
     [[nodiscard]] auto find(this auto& self, const K& key) {
         using self_t = std::remove_reference_t<decltype(self)>;
-
         using it = std::conditional_t<std::is_const_v<self_t>, const_iterator, iterator>;
 
         const auto loc = self.find_impl(key);
@@ -911,8 +965,7 @@ public:
     }
 
     template<class K>
-        requires alloy::hashing::transparent<Hash> && alloy::hashing::transparent<KeyEqual> &&
-                 alloy::hashing::hashable_with<Hash, K> && details::hash_map::compares_keys<KeyEqual, Key, K>
+        requires details::hash_map::transparent_lookup_key<K, Key, Hash, KeyEqual>
     [[nodiscard]] auto contains(const K& key) const -> bool {
         return static_cast<bool>(find_impl(key));
     }
@@ -922,13 +975,25 @@ public:
     }
 
     template<class K>
-        requires alloy::hashing::transparent<Hash> && alloy::hashing::transparent<KeyEqual> &&
-                 alloy::hashing::hashable_with<Hash, K> && details::hash_map::compares_keys<KeyEqual, Key, K>
+        requires details::hash_map::transparent_lookup_key<K, Key, Hash, KeyEqual>
     [[nodiscard]] auto count(const K& key) const -> size_type {
         return contains(key);
     }
 
     [[nodiscard]] auto equal_range(this auto& self, const key_type& key) {
+        auto it = self.find(key);
+        auto next = it;
+
+        if (it != self.end()) {
+            ++next;
+        }
+
+        return std::pair{it, next};
+    }
+
+    template<class K>
+        requires details::hash_map::transparent_lookup_key<K, Key, Hash, KeyEqual>
+    [[nodiscard]] auto equal_range(this auto& self, const K& key) {
         auto it = self.find(key);
         auto next = it;
 
@@ -951,7 +1016,26 @@ public:
         return try_emplace(std::move(key)).first->second;
     }
 
+    template<class K>
+        requires details::hash_map::transparent_lookup_key<K, Key, Hash, KeyEqual> &&
+                 std::constructible_from<Key, K&&> && std::default_initializable<mapped_type>
+    auto operator[](K&& key) -> mapped_type& {
+        return try_emplace_impl(std::forward<K>(key)).first->second;
+    }
+
     [[nodiscard]] auto at(this auto& self, const key_type& key) -> decltype(auto) {
+        auto it = self.find(key);
+
+        if (it == self.end()) [[unlikely]] {
+            throw std::out_of_range("hash_map::at");
+        }
+
+        return (it->second);
+    }
+
+    template<class K>
+        requires details::hash_map::transparent_lookup_key<K, Key, Hash, KeyEqual>
+    [[nodiscard]] auto at(this auto& self, const K& key) -> decltype(auto) {
         auto it = self.find(key);
 
         if (it == self.end()) [[unlikely]] {
@@ -1021,7 +1105,7 @@ public:
                 src.recover_relocated(it);
                 it = next;
             } else {
-                with_transfer_args(value, [&](auto&&... args) {
+                with_transfer_args(value, [&](auto&&... args) -> auto {
                     finish_insert(loc, std::forward<decltype(args)>(args)...);
                 });
                 it = src.erase(it);
@@ -1262,7 +1346,7 @@ private:
             auto* dst = data_ + g * group_size;
             using source_type = std::conditional_t<std::is_const_v<Other>, const storage_type, storage_type>;
             source_type* src = other.data_ + g * group_size;
-            auto construct_group = [&] {
+            auto construct_group = [&] -> auto {
                 while (remaining) {
                     const auto idx = std::countr_zero(remaining);
                     construct(dst + idx, src[idx]);
@@ -1291,21 +1375,21 @@ private:
 
     void copy_layout_from(const hash_map& other) {
         transfer_layout_from<std::is_nothrow_copy_constructible_v<storage_type>>(
-            other, [](storage_type* dst, const storage_type& src) {
+            other, [](storage_type* dst, const storage_type& src) -> auto {
                 alloy::construct_at(dst, src);
             });
     }
 
     void move_layout_from(hash_map& other) {
         if constexpr (alloy::is_trivially_relocatable<storage_type>) {
-            transfer_layout_from<true>(other, [](storage_type* dst, storage_type& src) noexcept {
+            transfer_layout_from<true>(other, [](storage_type* dst, storage_type& src) noexcept -> auto {
                 alloy::relocate_n(dst, alloy::addressof(src), 1);
             });
             other.len_ = 0;
         } else {
             transfer_layout_from<details::hash_map::nothrow_transfer<Key, Val>>(
-                other, [](storage_type* dst, storage_type& src) {
-                    with_transfer_args(src, [dst](auto&&... args) {
+                other, [](storage_type* dst, storage_type& src) -> auto {
+                    with_transfer_args(src, [dst](auto&&... args) -> auto {
                         alloy::construct_at(dst, std::forward<decltype(args)>(args)...);
                     });
                 });
@@ -1346,10 +1430,8 @@ private:
 
         auto& g = groups_[group];
 
-        if (g.maybe_caused_overflow_pos(slot)) {
-            if (max_len_ > 0) {
-                --max_len_;
-            }
+        if (g.maybe_caused_overflow_pos(slot) && max_len_ > 0) {
+            --max_len_;
         }
 
         g.reset(slot);
@@ -1570,7 +1652,7 @@ private:
 
     template<class... Args>
     auto insert_unique(size_type h, Args&&... args) -> locator {
-        return insert_unique_with(h, [&](storage_type* slot) {
+        return insert_unique_with(h, [&](storage_type* slot) -> auto {
             alloy::construct_at(slot, std::forward<Args>(args)...);
         });
     }
@@ -1593,7 +1675,7 @@ private:
     }
 
     template<class F>
-    static decltype(auto) with_transfer_args(storage_type& value, F&& f) {
+    static auto with_transfer_args(storage_type& value, F&& f) -> decltype(auto) {
         if constexpr (details::hash_map::nothrow_transfer<Key, Val>) {
             return std::forward<F>(f)(std::piecewise_construct,
                                       std::forward_as_tuple(std::move_if_noexcept(value.first)),
@@ -1619,13 +1701,13 @@ private:
 
         constexpr bool may_move = safe_transfer || !std::is_copy_constructible_v<Val>;
 
-        auto relocate_one = [&](storage_type& value, size_type h) {
+        auto relocate_one = [&](storage_type& value, size_type h) -> auto {
             if constexpr (raw_relocation) {
-                target.insert_unique_with(h, [&](storage_type* slot) noexcept {
+                target.insert_unique_with(h, [&](storage_type* slot) noexcept -> auto {
                     alloy::relocate_n(slot, alloy::addressof(value), 1);
                 });
             } else {
-                with_transfer_args(value, [&](auto&&... args) {
+                with_transfer_args(value, [&](auto&&... args) -> auto {
                     target.insert_unique(h, std::forward<decltype(args)>(args)...);
                 });
             }
@@ -1645,17 +1727,17 @@ private:
 
             size_type i = 0;
 
-            for_each_occupied([&](const storage_type& value) {
+            for_each_occupied([&](const storage_type& value) -> auto {
                 hashes[i++] = hash_key(value.first);
             });
 
             i = 0;
 
-            for_each_occupied([&](storage_type& value) {
+            for_each_occupied([&](storage_type& value) -> auto {
                 relocate_one(value, hashes[i++]);
             });
         } else {
-            for_each_occupied([&](storage_type& value) {
+            for_each_occupied([&](storage_type& value) -> auto {
                 relocate_one(value, hash_key(value.first));
             });
         }
